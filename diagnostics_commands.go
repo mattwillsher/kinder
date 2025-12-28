@@ -29,7 +29,8 @@ Checks:
   - Kinder network existence
   - Required containers running
   - Service endpoints (Step CA, Zot, Gatus, Traefik)
-  - Registry and Kubernetes end-to-end test (if Kind cluster is running)`,
+  - Registry and Kubernetes end-to-end test (if Kind cluster is running)
+  - ArgoCD installation and health (if installed in Kind cluster)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
@@ -123,6 +124,23 @@ Checks:
 				allPassed = false
 			} else {
 				fmt.Println("   ✅ Registry and Kubernetes end-to-end test passed")
+			}
+		}
+		fmt.Println()
+
+		// Check 8: ArgoCD health (only if Kind is running and ArgoCD is installed)
+		fmt.Println("8️⃣  Checking ArgoCD installation...")
+		if !kindExists {
+			fmt.Println("   ⚠️  Skipped (Kind cluster not running)")
+		} else {
+			argocdResult := checkArgoCDHealth(ctx, appName)
+			if argocdResult.skipped {
+				fmt.Printf("   ⚠️  Skipped (%s)\n", argocdResult.message)
+			} else if argocdResult.err != nil {
+				fmt.Printf("   ❌ FAILED: %v\n", argocdResult.err)
+				allPassed = false
+			} else {
+				fmt.Printf("   ✅ %s\n", argocdResult.message)
 			}
 		}
 		fmt.Println()
@@ -418,4 +436,112 @@ spec:
 		"describe", "pod", testPodName, "-n", testPodNS)
 	describeOutput, _ := describeCmd.CombinedOutput()
 	return fmt.Errorf("timeout waiting for pod to be running\n%s", describeOutput)
+}
+
+// argoCDHealthResult holds the result of ArgoCD health check
+type argoCDHealthResult struct {
+	skipped bool
+	message string
+	err     error
+}
+
+// checkArgoCDHealth verifies ArgoCD installation and health
+// Since ArgoCD may not have an ingress, we check via kubectl instead of HTTP
+func checkArgoCDHealth(ctx context.Context, clusterName string) argoCDHealthResult {
+	kubectlContext := "kind-" + clusterName
+
+	// Check if argocd namespace exists
+	nsCmd := exec.CommandContext(ctx, "kubectl", "--context", kubectlContext,
+		"get", "namespace", "argocd", "-o", "name")
+	if err := nsCmd.Run(); err != nil {
+		return argoCDHealthResult{skipped: true, message: "ArgoCD not installed"}
+	}
+
+	// Key ArgoCD deployments to check
+	deployments := []string{
+		"argocd-server",
+		"argocd-repo-server",
+		"argocd-applicationset-controller",
+	}
+
+	var healthy, total int
+	var unhealthyDeployments []string
+
+	for _, deploy := range deployments {
+		cmd := exec.CommandContext(ctx, "kubectl", "--context", kubectlContext,
+			"get", "deployment", deploy, "-n", "argocd",
+			"-o", "jsonpath={.status.availableReplicas}/{.status.replicas}")
+		output, err := cmd.Output()
+		if err != nil {
+			// Deployment might not exist (e.g., applicationset-controller is optional)
+			continue
+		}
+
+		total++
+		replicas := strings.TrimSpace(string(output))
+		parts := strings.Split(replicas, "/")
+		if len(parts) == 2 && parts[0] == parts[1] && parts[0] != "" && parts[0] != "0" {
+			healthy++
+		} else {
+			unhealthyDeployments = append(unhealthyDeployments, deploy)
+		}
+	}
+
+	// Also check the statefulset (argocd-application-controller)
+	ssCmd := exec.CommandContext(ctx, "kubectl", "--context", kubectlContext,
+		"get", "statefulset", "argocd-application-controller", "-n", "argocd",
+		"-o", "jsonpath={.status.readyReplicas}/{.status.replicas}")
+	if output, err := ssCmd.Output(); err == nil {
+		total++
+		replicas := strings.TrimSpace(string(output))
+		parts := strings.Split(replicas, "/")
+		if len(parts) == 2 && parts[0] == parts[1] && parts[0] != "" && parts[0] != "0" {
+			healthy++
+		} else {
+			unhealthyDeployments = append(unhealthyDeployments, "argocd-application-controller")
+		}
+	}
+
+	if total == 0 {
+		return argoCDHealthResult{
+			err: fmt.Errorf("no ArgoCD components found in argocd namespace"),
+		}
+	}
+
+	if healthy < total {
+		return argoCDHealthResult{
+			err: fmt.Errorf("%d/%d components healthy, unhealthy: %s",
+				healthy, total, strings.Join(unhealthyDeployments, ", ")),
+		}
+	}
+
+	// Get version for the success message
+	version := getArgoCDVersionFromCluster(ctx, kubectlContext)
+	if version != "" {
+		return argoCDHealthResult{
+			message: fmt.Sprintf("ArgoCD healthy (%d/%d components, %s)", healthy, total, version),
+		}
+	}
+
+	return argoCDHealthResult{
+		message: fmt.Sprintf("ArgoCD healthy (%d/%d components)", healthy, total),
+	}
+}
+
+// getArgoCDVersionFromCluster extracts the ArgoCD version from the argocd-server image
+func getArgoCDVersionFromCluster(ctx context.Context, kubectlContext string) string {
+	cmd := exec.CommandContext(ctx, "kubectl", "--context", kubectlContext,
+		"get", "deployment", "argocd-server", "-n", "argocd",
+		"-o", "jsonpath={.spec.template.spec.containers[0].image}")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	// Image format: quay.io/argoproj/argocd:v2.9.3 or argoproj/argocd:v2.9.3
+	image := strings.TrimSpace(string(output))
+	if idx := strings.LastIndex(image, ":"); idx != -1 {
+		return image[idx+1:]
+	}
+	return ""
 }

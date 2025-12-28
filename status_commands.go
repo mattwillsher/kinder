@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -54,6 +55,12 @@ var statusCmd = &cobra.Command{
 		fmt.Println("☸️ Kind Cluster")
 		kindStatus := checkKindClusterStatus(ctx)
 		fmt.Println(kindStatus)
+		fmt.Println()
+
+		// ArgoCD status (only if Kind cluster exists)
+		fmt.Println("🔄 ArgoCD")
+		argocdStatus := checkArgoCDStatus(ctx)
+		fmt.Println(argocdStatus)
 		fmt.Println()
 
 		// Endpoints
@@ -307,4 +314,74 @@ func checkEndpointsStatus(ctx context.Context) string {
 	}
 
 	return result
+}
+
+func checkArgoCDStatus(ctx context.Context) string {
+	clusterName := config.GetString(config.KeyAppName)
+	if clusterName == "" {
+		clusterName = config.DefaultAppName
+	}
+
+	// Check if Kind cluster exists first
+	exists, err := docker.KindExists(clusterName)
+	if err != nil {
+		return fmt.Sprintf("   ✗ Error checking cluster: %v", err)
+	}
+	if !exists {
+		return "   ○ Kind cluster not running"
+	}
+
+	kubectlContext := "kind-" + clusterName
+
+	// Check if argocd namespace exists
+	nsCmd := exec.CommandContext(ctx, "kubectl", "--context", kubectlContext,
+		"get", "namespace", "argocd", "-o", "name")
+	if err := nsCmd.Run(); err != nil {
+		return "   ○ Not installed (namespace 'argocd' not found)"
+	}
+
+	// Get argocd-server deployment status
+	deployCmd := exec.CommandContext(ctx, "kubectl", "--context", kubectlContext,
+		"get", "deployment", "argocd-server", "-n", "argocd",
+		"-o", "jsonpath={.status.availableReplicas}/{.status.replicas}")
+	output, err := deployCmd.Output()
+	if err != nil {
+		return "   ⚠ Installed but argocd-server deployment not found"
+	}
+
+	replicas := strings.TrimSpace(string(output))
+	if replicas == "" || replicas == "/" {
+		return "   ⚠ argocd-server deployment exists but no replicas info"
+	}
+
+	// Parse replicas (format: "1/1")
+	parts := strings.Split(replicas, "/")
+	if len(parts) == 2 && parts[0] == parts[1] && parts[0] != "0" {
+		// Get version from argocd-server image tag
+		version := getArgoCDVersion(ctx, kubectlContext)
+		if version != "" {
+			return fmt.Sprintf("   ● Running (%s replicas, %s)", replicas, version)
+		}
+		return fmt.Sprintf("   ● Running (%s replicas)", replicas)
+	}
+
+	return fmt.Sprintf("   ⚠ Degraded (%s replicas available)", replicas)
+}
+
+// getArgoCDVersion extracts the ArgoCD version from the argocd-server container image
+func getArgoCDVersion(ctx context.Context, kubectlContext string) string {
+	cmd := exec.CommandContext(ctx, "kubectl", "--context", kubectlContext,
+		"get", "deployment", "argocd-server", "-n", "argocd",
+		"-o", "jsonpath={.spec.template.spec.containers[0].image}")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	// Image format: quay.io/argoproj/argocd:v2.9.3 or argoproj/argocd:v2.9.3
+	image := strings.TrimSpace(string(output))
+	if idx := strings.LastIndex(image, ":"); idx != -1 {
+		return image[idx+1:]
+	}
+	return ""
 }
