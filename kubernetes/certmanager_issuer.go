@@ -1,4 +1,4 @@
-package docker
+package kubernetes
 
 import (
 	"archive/tar"
@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"codeberg.org/hipkoi/kinder/config"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -128,10 +129,10 @@ func applyIssuerDefaults(cfg *CertManagerIssuerConfig) {
 		cfg.Email = CertManagerIssuerEmail
 	}
 	if cfg.Domain == "" {
-		cfg.Domain = DefaultTraefikDomain
+		cfg.Domain = config.DefaultDomain
 	}
 	if cfg.Port == "" {
-		cfg.Port = DefaultTraefikPort
+		cfg.Port = config.DefaultTraefikPort
 	}
 	if cfg.IngressClass == "" {
 		cfg.IngressClass = CertManagerIssuerIngressClass

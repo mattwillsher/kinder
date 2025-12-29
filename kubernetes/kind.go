@@ -1,4 +1,4 @@
-package docker
+package kubernetes
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"codeberg.org/hipkoi/kinder/docker"
 	"github.com/docker/docker/api/types/container"
 	"sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 	"sigs.k8s.io/kind/pkg/cluster"
@@ -294,7 +295,7 @@ func createCertsDirStructure(dataDir string, caCertPath string, mirrors map[stri
 		hostsToml := fmt.Sprintf(`server = "http://%s"
 
 [host."http://%s"]
-  capabilities = ["pull", "resolve", "push"]
+  capabilities = ["pull", "resolve"]
   skip_verify = true
 `, zotAddr, zotAddr)
 
@@ -314,7 +315,7 @@ func createCertsDirStructure(dataDir string, caCertPath string, mirrors map[stri
 		localhostHostsToml := fmt.Sprintf(`server = "http://%s"
 
 [host."http://%s"]
-  capabilities = ["pull", "resolve", "push"]
+  capabilities = ["pull", "resolve"]
   skip_verify = true
 `, zotAddr, zotAddr)
 
@@ -337,17 +338,15 @@ func createCertsDirStructure(dataDir string, caCertPath string, mirrors map[stri
 		// Determine the upstream server URL based on registry
 		upstreamServer := getUpstreamServer(registry)
 
-		// Build the mirror URL with the path prefix using the original registry name
-		// e.g., "http://zot:5000" + "/registry-1.docker.io" -> "http://zot:5000/registry-1.docker.io"
-		// This keeps the Zot storage path consistent with what's configured in Zot sync
-		mirrorWithPath := mirrorURL + MirrorPath(registry)
-
+		// Use the mirror URL directly without path prefix
+		// OCI registries expect /v2/<repo>/... path format, so the mirror URL
+		// must not include a path prefix that would break this structure
 		// Create hosts.toml
 		hostsToml := fmt.Sprintf(`server = "%s"
 
 [host."%s"]
   capabilities = ["pull", "resolve"]
-`, upstreamServer, mirrorWithPath)
+`, upstreamServer, mirrorURL)
 
 		hostsPath := filepath.Join(registryDir, "hosts.toml")
 		if err := os.WriteFile(hostsPath, []byte(hostsToml), 0644); err != nil {
@@ -387,7 +386,7 @@ func getUpstreamServer(registry string) string {
 
 // connectKindToNetwork connects Kind cluster nodes to a Docker network
 func connectKindToNetwork(ctx context.Context, clusterName, networkName string) error {
-	c, err := GetSharedClient()
+	c, err := docker.GetSharedClient()
 	if err != nil {
 		return err
 	}
@@ -401,13 +400,13 @@ func connectKindToNetwork(ctx context.Context, clusterName, networkName string) 
 	}
 
 	prefix := clusterName + "-"
-	for _, container := range containers {
-		for _, name := range container.Names {
+	for _, ctr := range containers {
+		for _, name := range ctr.Names {
 			// Container names have leading /
 			name = strings.TrimPrefix(name, "/")
 			if strings.HasPrefix(name, prefix) {
 				// Check if already connected
-				inspect, err := cli.ContainerInspect(ctx, container.ID)
+				inspect, err := cli.ContainerInspect(ctx, ctr.ID)
 				if err != nil {
 					continue
 				}
@@ -421,7 +420,7 @@ func connectKindToNetwork(ctx context.Context, clusterName, networkName string) 
 				}
 
 				if !alreadyConnected {
-					if err := cli.NetworkConnect(ctx, networkName, container.ID, nil); err != nil {
+					if err := cli.NetworkConnect(ctx, networkName, ctr.ID, nil); err != nil {
 						return fmt.Errorf("failed to connect %s to network %s: %w", name, networkName, err)
 					}
 				}
@@ -435,7 +434,7 @@ func connectKindToNetwork(ctx context.Context, clusterName, networkName string) 
 // GetKindNodes returns information about Kind cluster nodes.
 // Kind nodes follow the naming pattern: <cluster>-control-plane[N] or <cluster>-worker[N]
 func GetKindNodes(ctx context.Context, clusterName string) ([]string, error) {
-	c, err := GetSharedClient()
+	c, err := docker.GetSharedClient()
 	if err != nil {
 		return nil, err
 	}
@@ -450,8 +449,8 @@ func GetKindNodes(ctx context.Context, clusterName string) ([]string, error) {
 	controlPlanePrefix := clusterName + "-control-plane"
 	workerPrefix := clusterName + "-worker"
 
-	for _, container := range containers {
-		for _, name := range container.Names {
+	for _, ctr := range containers {
+		for _, name := range ctr.Names {
 			name = strings.TrimPrefix(name, "/")
 			// Kind nodes are either control-plane or worker nodes
 			if strings.HasPrefix(name, controlPlanePrefix) || strings.HasPrefix(name, workerPrefix) {

@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeberg.org/hipkoi/kinder/docker"
+	"codeberg.org/hipkoi/kinder/kubernetes"
 	"github.com/spf13/cobra"
 )
 
@@ -69,7 +69,7 @@ ArgoCD can reference this artifact directly:
 			return fmt.Errorf("CA certificate not found at %s. Run 'kinder start' or 'kinder ca generate' first", caCertPath)
 		}
 
-		cfg := docker.TrustManagerBundleConfig{
+		cfg := kubernetes.TrustManagerBundleConfig{
 			RootCACertPath:    caCertPath,
 			RegistryURL:       "localhost:5000",
 			ImageName:         trustBundleImageName,
@@ -83,7 +83,7 @@ ArgoCD can reference this artifact directly:
 
 		// Build and push the bundle
 		ProgressStart("📦", "Building OCI artifact")
-		if err := docker.BuildAndPushTrustManagerBundle(ctx, cfg); err != nil {
+		if err := kubernetes.BuildAndPushTrustManagerBundle(ctx, cfg); err != nil {
 			ProgressDone(false, err.Error())
 			return fmt.Errorf("failed to push trust-manager bundle: %w", err)
 		}
@@ -117,7 +117,7 @@ ArgoCD can reference this artifact directly:
 				return fmt.Errorf("failed to generate manifests: %w", err)
 			}
 
-			if err := docker.SaveTrustManagerManifests(dataDir, manifests); err != nil {
+			if err := kubernetes.SaveTrustManagerManifests(dataDir, manifests); err != nil {
 				ProgressDone(false, err.Error())
 				return fmt.Errorf("failed to save manifests: %w", err)
 			}
@@ -175,7 +175,7 @@ var trustBundleShowCmd = &cobra.Command{
 			}
 		}
 
-		cfg := docker.TrustManagerBundleConfig{
+		cfg := kubernetes.TrustManagerBundleConfig{
 			RootCACertPath:    caCertPath,
 			IncludeMozillaCAs: trustBundleIncludeMozilla,
 			TargetNamespace:   trustBundleTargetNS,
@@ -210,13 +210,13 @@ var trustBundleShowCmd = &cobra.Command{
 // Helper functions exposed for the commands
 
 func downloadMozillaCACerts(ctx context.Context) ([]byte, error) {
-	// This delegates to the unexported function in the docker package
+	// This delegates to the unexported function in the kubernetes package
 	// We need to make a simple HTTP call here
-	return docker.DownloadMozillaCACerts(ctx)
+	return kubernetes.DownloadMozillaCACerts(ctx)
 }
 
-func generateTrustManagerManifests(cfg docker.TrustManagerBundleConfig, kinderCA, mozillaCA []byte) (*docker.TrustManagerManifests, error) {
-	return docker.GenerateTrustManagerManifests(cfg, kinderCA, mozillaCA)
+func generateTrustManagerManifests(cfg kubernetes.TrustManagerBundleConfig, kinderCA, mozillaCA []byte) (*kubernetes.TrustManagerManifests, error) {
+	return kubernetes.GenerateTrustManagerManifests(cfg, kinderCA, mozillaCA)
 }
 
 func splitLines(s string) []string {
@@ -238,8 +238,8 @@ func init() {
 	// Setup flags for trust-bundle push command
 	trustBundlePushCmd.Flags().BoolVar(&trustBundleIncludeMozilla, "include-mozilla", true, "Include Mozilla CA certificates in the bundle")
 	trustBundlePushCmd.Flags().StringVar(&trustBundleTargetNS, "target-namespace", "", "Restrict bundle to a specific namespace (empty = all namespaces)")
-	trustBundlePushCmd.Flags().StringVar(&trustBundleImageName, "image-name", docker.TrustManagerBundleImageName, "Image name for the bundle")
-	trustBundlePushCmd.Flags().StringVar(&trustBundleImageTag, "image-tag", docker.TrustManagerBundleImageTag, "Image tag for the bundle")
+	trustBundlePushCmd.Flags().StringVar(&trustBundleImageName, "image-name", kubernetes.TrustManagerBundleImageName, "Image name for the bundle")
+	trustBundlePushCmd.Flags().StringVar(&trustBundleImageTag, "image-tag", kubernetes.TrustManagerBundleImageTag, "Image tag for the bundle")
 	trustBundlePushCmd.Flags().BoolVar(&trustBundleSaveLocal, "save-local", false, "Also save manifests to local data directory")
 
 	// Setup flags for trust-bundle show command

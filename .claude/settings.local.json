@@ -70,7 +70,10 @@
       "Bash(KINDER_DATADIR=/tmp/kinder-test ./kinder ca generate:*)",
       "Bash(KINDER_DATADIR=/tmp/kinder-test ./kinder trust-bundle show:*)",
       "Bash(KINDER_DATADIR=/tmp/kinder-test ./kinder cert-issuer:*)",
-      "Bash(KINDER_ARGOCD_VERSION=v3.2.3 ./kinder argocd show:*)"
+      "Bash(KINDER_ARGOCD_VERSION=v3.2.3 ./kinder argocd show:*)",
+      "Bash(KINDER_ARGOCD_VERSION=v2.13.3 go run:*)",
+      "Bash(KINDER_ARGOCD_MANIFESTURL=https://example.com/from-env.yaml go run:*)",
+      "Bash(KINDER_ARGOCD_MANIFESTURL=https://example.com/apps.yaml go run:*)"
     ]
   }
 }

@@ -13,6 +13,7 @@ import (
 
 	"codeberg.org/hipkoi/kinder/config"
 	"codeberg.org/hipkoi/kinder/docker"
+	"codeberg.org/hipkoi/kinder/kubernetes"
 	"github.com/spf13/cobra"
 )
 
@@ -235,7 +236,7 @@ func checkKindClusterStatus(ctx context.Context) string {
 		clusterName = config.DefaultAppName
 	}
 
-	exists, err := docker.KindExists(clusterName)
+	exists, err := kubernetes.KindExists(clusterName)
 	if err != nil {
 		return fmt.Sprintf("   ✗ Error checking cluster: %v", err)
 	}
@@ -245,7 +246,7 @@ func checkKindClusterStatus(ctx context.Context) string {
 	}
 
 	// Get nodes from Kind API
-	nodes, err := docker.GetKindNodes(ctx, clusterName)
+	nodes, err := kubernetes.GetKindNodes(ctx, clusterName)
 	if err != nil {
 		return fmt.Sprintf("   ● %s (exists, failed to get nodes: %v)", clusterName, err)
 	}
@@ -323,7 +324,7 @@ func checkArgoCDStatus(ctx context.Context) string {
 	}
 
 	// Check if Kind cluster exists first
-	exists, err := docker.KindExists(clusterName)
+	exists, err := kubernetes.KindExists(clusterName)
 	if err != nil {
 		return fmt.Sprintf("   ✗ Error checking cluster: %v", err)
 	}

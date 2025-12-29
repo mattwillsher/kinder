@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"codeberg.org/hipkoi/kinder/config"
-	"codeberg.org/hipkoi/kinder/docker"
+	"codeberg.org/hipkoi/kinder/kubernetes"
 	"github.com/spf13/cobra"
 )
 
@@ -61,10 +61,10 @@ var kindKubeconfigCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		clusterName := config.GetString(config.KeyAppName)
 		if clusterName == "" {
-			clusterName = docker.KindClusterName
+			clusterName = kubernetes.KindClusterName
 		}
 
-		kubeconfig, err := docker.GetKindKubeconfig(clusterName)
+		kubeconfig, err := kubernetes.GetKindKubeconfig(clusterName)
 		if err != nil {
 			return fmt.Errorf("failed to get kubeconfig: %w", err)
 		}
@@ -97,7 +97,7 @@ func startKindCluster(ctx context.Context) error {
 		return fmt.Errorf("CA certificate not found at %s - run 'kinder start' first", caCertPath)
 	}
 
-	kindCfg := docker.KindConfig{
+	kindCfg := kubernetes.KindConfig{
 		ClusterName:     appName,
 		NodeImage:       kindNodeImage,
 		CACertPath:      caCertPath,
@@ -108,7 +108,7 @@ func startKindCluster(ctx context.Context) error {
 	}
 
 	// Check if cluster already exists
-	exists, err := docker.KindExists(kindCfg.ClusterName)
+	exists, err := kubernetes.KindExists(kindCfg.ClusterName)
 	if err != nil {
 		return fmt.Errorf("failed to check cluster status: %w", err)
 	}
@@ -119,7 +119,7 @@ func startKindCluster(ctx context.Context) error {
 	}
 
 	fmt.Printf("Creating Kind cluster '%s'...\n", kindCfg.ClusterName)
-	if err := docker.StartKind(ctx, kindCfg); err != nil {
+	if err := kubernetes.StartKind(ctx, kindCfg); err != nil {
 		return fmt.Errorf("failed to start Kind cluster: %w", err)
 	}
 
@@ -139,12 +139,12 @@ func stopKindCluster() error {
 		appName = config.DefaultAppName
 	}
 
-	kindCfg := docker.KindConfig{
+	kindCfg := kubernetes.KindConfig{
 		ClusterName: appName,
 	}
 
 	// Check if cluster exists
-	exists, err := docker.KindExists(kindCfg.ClusterName)
+	exists, err := kubernetes.KindExists(kindCfg.ClusterName)
 	if err != nil {
 		return fmt.Errorf("failed to check cluster status: %w", err)
 	}
@@ -155,7 +155,7 @@ func stopKindCluster() error {
 	}
 
 	fmt.Printf("Deleting Kind cluster '%s'...\n", kindCfg.ClusterName)
-	if err := docker.StopKind(kindCfg); err != nil {
+	if err := kubernetes.StopKind(kindCfg); err != nil {
 		return fmt.Errorf("failed to stop Kind cluster: %w", err)
 	}
 
@@ -169,7 +169,7 @@ func showKindStatus(ctx context.Context) error {
 		appName = config.DefaultAppName
 	}
 
-	exists, err := docker.KindExists(appName)
+	exists, err := kubernetes.KindExists(appName)
 	if err != nil {
 		return fmt.Errorf("failed to check cluster status: %w", err)
 	}
@@ -180,7 +180,7 @@ func showKindStatus(ctx context.Context) error {
 	}
 
 	// Get nodes
-	nodes, err := docker.GetKindNodes(ctx, appName)
+	nodes, err := kubernetes.GetKindNodes(ctx, appName)
 	if err != nil {
 		fmt.Printf("Kind cluster '%s': running (failed to get nodes: %v)\n", appName, err)
 		return nil

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"codeberg.org/hipkoi/kinder/config"
 	"codeberg.org/hipkoi/kinder/docker"
+	"codeberg.org/hipkoi/kinder/kubernetes"
 	"github.com/spf13/cobra"
 )
 
@@ -345,7 +347,7 @@ func startKind(ctx context.Context) error {
 		return fmt.Errorf("CA certificate not found at %s - run 'kinder start' first", caCertPath)
 	}
 
-	kindCfg := docker.KindConfig{
+	kindCfg := kubernetes.KindConfig{
 		ClusterName:     appName,
 		NodeImage:       kindNodeImage,
 		CACertPath:      caCertPath,
@@ -357,7 +359,7 @@ func startKind(ctx context.Context) error {
 	}
 
 	// Check if cluster already exists
-	exists, err := docker.KindExists(kindCfg.ClusterName)
+	exists, err := kubernetes.KindExists(kindCfg.ClusterName)
 	if err != nil {
 		return fmt.Errorf("failed to check cluster status: %w", err)
 	}
@@ -373,7 +375,7 @@ func startKind(ctx context.Context) error {
 		Verbose("Creating Kind cluster '%s'...\n", kindCfg.ClusterName)
 	}
 
-	if err := docker.StartKind(ctx, kindCfg); err != nil {
+	if err := kubernetes.StartKind(ctx, kindCfg); err != nil {
 		return fmt.Errorf("failed to start Kind cluster: %w", err)
 	}
 
@@ -388,7 +390,7 @@ func stopKind(ctx context.Context) error {
 	}
 
 	// Check if cluster exists
-	exists, err := docker.KindExists(appName)
+	exists, err := kubernetes.KindExists(appName)
 	if err != nil {
 		return fmt.Errorf("failed to check cluster status: %w", err)
 	}
@@ -398,15 +400,44 @@ func stopKind(ctx context.Context) error {
 		return nil
 	}
 
-	kindCfg := docker.KindConfig{
+	kindCfg := kubernetes.KindConfig{
 		ClusterName: appName,
 		Verbose:     IsVerbose(),
 	}
 
-	if err := docker.StopKind(kindCfg); err != nil {
+	if err := kubernetes.StopKind(kindCfg); err != nil {
 		return fmt.Errorf("failed to stop Kind cluster: %w", err)
 	}
 
 	Verbose("Kind cluster '%s' deleted\n", appName)
 	return nil
+}
+
+// ArgoCD functions
+func bootstrapArgoCD(ctx context.Context) error {
+	dataDir, err := getDataDir()
+	if err != nil {
+		return fmt.Errorf("failed to get data directory: %w", err)
+	}
+
+	caCertPEM, _ := os.ReadFile(filepath.Join(dataDir, CACertFilename))
+
+	appName := config.GetString(config.KeyAppName)
+	if appName == "" {
+		appName = config.DefaultAppName
+	}
+
+	cfg := kubernetes.ArgoCDConfig{
+		Version:           config.GetString(config.KeyArgocdVersion),
+		ManifestURL:       config.GetString(config.KeyArgocdManifestURL),
+		Domain:            config.GetString(config.KeyDomain),
+		Port:              config.GetString(config.KeyTraefikPort),
+		CACertPEM:         string(caCertPEM),
+		WaitTimeout:       5 * time.Minute,
+		SkipInitialApp:    true,
+		IncludeKinderApps: true,
+		KubeContext:       "kind-" + appName,
+	}
+
+	return kubernetes.Install(ctx, cfg, nil)
 }

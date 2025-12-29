@@ -1,6 +1,6 @@
 //go:build integration
 
-package docker
+package kubernetes
 
 import (
 	"context"
@@ -153,56 +153,6 @@ func TestCertsDirStructureIntegration(t *testing.T) {
 
 	if !strings.Contains(contentStr, `server = "https://registry-1.docker.io"`) {
 		t.Error("docker.io hosts.toml should use registry-1.docker.io as upstream")
-	}
-	if !strings.Contains(contentStr, `http://zot:5000/registry-1.docker.io`) {
-		t.Error("docker.io hosts.toml should have path prefix /registry-1.docker.io")
-	}
-}
-
-// TestZotConfigIntegration tests the full Zot configuration generation
-func TestZotConfigIntegration(t *testing.T) {
-	dataDir, cleanup := setupTestConfig(t, "kinder-integration-zot-*")
-	defer cleanup()
-
-	configPath := filepath.Join(dataDir, "zot", "config.json")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		t.Fatalf("failed to create zot directory: %v", err)
-	}
-
-	// Use registry mirrors from config
-	mirrors := config.GetStringSlice(config.KeyRegistryMirrors)
-	if len(mirrors) == 0 {
-		mirrors = config.DefaultRegistryMirrors
-	}
-
-	err := generateZotConfig(configPath, mirrors)
-	if err != nil {
-		t.Fatalf("generateZotConfig failed: %v", err)
-	}
-
-	content, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("failed to read config: %v", err)
-	}
-
-	contentStr := string(content)
-
-	// Verify all mirrors have content prefixes
-	for _, mirror := range mirrors {
-		expectedDest := `"destination": "/` + mirror + `"`
-		if !strings.Contains(contentStr, expectedDest) {
-			t.Errorf("Zot config missing destination for %s", mirror)
-		}
-	}
-
-	// Verify sync is enabled
-	if !strings.Contains(contentStr, `"enable": true`) {
-		t.Error("Zot config should have sync enabled")
-	}
-
-	// Verify onDemand is set
-	if !strings.Contains(contentStr, `"onDemand": true`) {
-		t.Error("Zot config should have onDemand enabled")
 	}
 }
 
@@ -441,14 +391,14 @@ func TestBuildKindConfigIntegration(t *testing.T) {
 	certsDir := filepath.Join(verifyDataDir, "certs.d")
 
 	// Check all expected directories exist
-	expectedDirs := map[string]string{
-		"docker.io":       "registry-1.docker.io", // normalized name -> original for path
-		"ghcr.io":         "ghcr.io",
-		"quay.io":         "quay.io",
-		"registry.k8s.io": "registry.k8s.io",
+	expectedDirs := []string{
+		"docker.io",
+		"ghcr.io",
+		"quay.io",
+		"registry.k8s.io",
 	}
 
-	for normalizedName, originalName := range expectedDirs {
+	for _, normalizedName := range expectedDirs {
 		dirPath := filepath.Join(certsDir, normalizedName)
 		hostsPath := filepath.Join(dirPath, "hosts.toml")
 
@@ -460,11 +410,10 @@ func TestBuildKindConfigIntegration(t *testing.T) {
 
 		contentStr := string(content)
 
-		// Verify mirror URL includes path prefix with original name
-		expectedMirror := "http://zot:5000/" + originalName
-		if !strings.Contains(contentStr, expectedMirror) {
-			t.Errorf("%s/hosts.toml should contain mirror %s, got:\n%s",
-				normalizedName, expectedMirror, contentStr)
+		// Verify mirror URL
+		if !strings.Contains(contentStr, "http://zot:5000") {
+			t.Errorf("%s/hosts.toml should contain mirror URL, got:\n%s",
+				normalizedName, contentStr)
 		}
 	}
 

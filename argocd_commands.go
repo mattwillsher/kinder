@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"codeberg.org/hipkoi/kinder/config"
-	"codeberg.org/hipkoi/kinder/docker"
+	"codeberg.org/hipkoi/kinder/kubernetes"
 	"github.com/spf13/cobra"
 )
 
@@ -20,8 +20,8 @@ var (
 	argocdRepoBranch      string
 	argocdAppName         string
 	argocdTargetNamespace string
+	argocdManifestURL     string
 	argocdIncludeKinder   bool
-	argocdWait            bool
 	argocdWaitTimeout     time.Duration
 	argocdSkipApp         bool
 
@@ -47,19 +47,22 @@ include kinder's OCI-based applications (trust-bundle, cert-issuer).`,
 
 var argocdBootstrapCmd = &cobra.Command{
 	Use:   "bootstrap",
-	Short: "Install ArgoCD and configure initial application",
-	Long: `Install ArgoCD to the cluster and optionally configure an initial Application.
+	Short: "Install ArgoCD with anonymous access",
+	Long: `Install ArgoCD to the cluster with anonymous admin access (no login required).
 
 This command:
   1. Creates the argocd namespace
   2. Installs ArgoCD from upstream manifests
-  3. (Optional) Waits for ArgoCD to be ready
-  4. (Optional) Creates repository credentials for private repos
-  5. (Optional) Creates an initial Application pointing to your GitOps repo
-  6. (Optional) Creates Applications for kinder OCI bundles
+  3. Disables authentication (anonymous admin access)
+  4. Waits for rollout to complete
+  5. (Optional) Mounts CA certificate for private registry access
+  6. (Optional) Creates repository credentials for private repos
+  7. (Optional) Creates an initial Application pointing to your GitOps repo
+  8. (Optional) Creates Applications for kinder OCI bundles
+  9. (Optional) Applies additional manifests from a URL (app-of-apps pattern)
 
 Examples:
-  # Install ArgoCD only (no initial app)
+  # Install ArgoCD only
   kinder argocd bootstrap
 
   # Install with public GitOps repo
@@ -76,11 +79,12 @@ Examples:
     --repo-url git@github.com:org/private.git \
     --git-ssh-key ~/.ssh/id_ed25519
 
-  # Include kinder OCI apps and wait for ready
+  # Include kinder OCI apps
+  kinder argocd bootstrap --include-kinder-apps
+
+  # Install app-of-apps from URL
   kinder argocd bootstrap \
-    --repo-url https://github.com/org/gitops \
-    --include-kinder-apps \
-    --wait`,
+    --manifest-url https://raw.githubusercontent.com/org/gitops/main/app-of-apps.yaml`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
@@ -90,12 +94,18 @@ Examples:
 			version = config.GetString(config.KeyArgocdVersion)
 		}
 
+		// Resolve manifest URL: CLI flag > config file
+		manifestURL := argocdManifestURL
+		if manifestURL == "" {
+			manifestURL = config.GetString(config.KeyArgocdManifestURL)
+		}
+
 		// Determine credential type
-		credType := docker.GitCredentialNone
+		credType := kubernetes.GitCredentialNone
 		if argocdGitUsername != "" && argocdGitPassword != "" {
-			credType = docker.GitCredentialHTTP
+			credType = kubernetes.GitCredentialHTTP
 		} else if argocdGitSSHKeyPath != "" {
-			credType = docker.GitCredentialSSH
+			credType = kubernetes.GitCredentialSSH
 		}
 
 		// Validate credential combinations
@@ -106,7 +116,14 @@ Examples:
 			return fmt.Errorf("--git-username is required when --git-password is provided")
 		}
 
-		cfg := docker.ArgoCDConfig{
+		// Load CA cert for registry TLS trust
+		dataDir, err := config.GetDataDir()
+		if err != nil {
+			return fmt.Errorf("failed to get data dir: %w", err)
+		}
+		caCertPEM, _ := os.ReadFile(dataDir + "/ca.crt")
+
+		cfg := kubernetes.ArgoCDConfig{
 			Version:           version,
 			Namespace:         argocdNamespace,
 			RepoURL:           argocdRepoURL,
@@ -114,86 +131,41 @@ Examples:
 			RepoBranch:        argocdRepoBranch,
 			AppName:           argocdAppName,
 			TargetNamespace:   argocdTargetNamespace,
+			ManifestURL:       manifestURL,
 			CredentialType:    credType,
 			HTTPUsername:      argocdGitUsername,
 			HTTPPassword:      argocdGitPassword,
 			SSHPrivateKeyPath: argocdGitSSHKeyPath,
 			IncludeKinderApps: argocdIncludeKinder,
 			SkipInitialApp:    argocdSkipApp || argocdRepoURL == "",
-			WaitReady:         argocdWait,
 			WaitTimeout:       argocdWaitTimeout,
 			KubeconfigPath:    argocdKubeconfig,
 			KubeContext:       argocdContext,
+			Domain:            config.GetString(config.KeyDomain),
+			Port:              config.GetString(config.KeyTraefikPort),
+			CACertPEM:         string(caCertPEM),
 		}
 
-		Header("Bootstrapping ArgoCD...")
+		Header("Installing ArgoCD...")
 		BlankLine()
 
-		// Progress callback
-		progressFn := func(step, message string) {
-			switch step {
-			case "namespace":
-				ProgressStart("📁", message)
-				ProgressDone(true, "")
-			case "install":
-				ProgressStart("📦", message)
-			case "wait":
-				ProgressDone(true, "Installed")
-				ProgressStart("⏳", message)
-			case "secret":
-				if !argocdWait {
-					ProgressDone(true, "Installed")
-				} else {
-					ProgressDone(true, "Ready")
-				}
-				ProgressStart("🔑", message)
-				ProgressDone(true, "")
-			case "app":
-				if cfg.CredentialType == docker.GitCredentialNone {
-					if !argocdWait {
-						ProgressDone(true, "Installed")
-					} else {
-						ProgressDone(true, "Ready")
-					}
-				}
-				ProgressStart("📱", message)
-				ProgressDone(true, "")
-			case "kinder":
-				ProgressStart("🔧", message)
-				ProgressDone(true, "")
-			}
-		}
-
-		if err := docker.BootstrapArgoCD(ctx, cfg, progressFn); err != nil {
-			return fmt.Errorf("failed to bootstrap ArgoCD: %w", err)
-		}
-
-		// Final progress done if we haven't printed it yet
-		if !argocdWait && argocdRepoURL == "" && !argocdIncludeKinder {
-			ProgressDone(true, "Installed")
+		if err := kubernetes.Install(ctx, cfg, func(msg string) {
+			ProgressStart("", msg)
+			ProgressDone(true, "")
+		}); err != nil {
+			return fmt.Errorf("failed to install ArgoCD: %w", err)
 		}
 
 		BlankLine()
-		Success("ArgoCD bootstrapped successfully!")
+		Success("ArgoCD installed with anonymous admin access")
 		BlankLine()
 
-		// Get and display admin password
-		password, err := docker.GetArgoCDPassword(ctx, cfg)
-		if err == nil && password != "" {
-			Header("Access:")
-			Output("  Username: admin\n")
-			Output("  Password: %s\n", password)
-			BlankLine()
-		}
-
-		// Show port-forward instructions
+		// Show access instructions
 		Header("Connect to ArgoCD UI:")
-		appName := config.GetString(config.KeyAppName)
-		if appName == "" {
-			appName = config.DefaultAppName
-		}
-		Output("  kubectl port-forward svc/argocd-server -n %s 8080:443\n", cfg.Namespace)
-		Output("  Open: https://localhost:8080\n")
+		Output("  kubectl port-forward svc/argocd-server -n %s 8080:80\n", cfg.Namespace)
+		Output("  Open: http://localhost:8080\n")
+		BlankLine()
+		Output("  No login required (anonymous admin access enabled)\n")
 
 		return nil
 	},
@@ -201,8 +173,8 @@ Examples:
 
 var argocdShowCmd = &cobra.Command{
 	Use:   "show",
-	Short: "Show the ArgoCD manifests that would be applied",
-	Long:  `Display the Kubernetes manifests that would be applied during bootstrap.`,
+	Short: "Show the ArgoCD installation configuration",
+	Long:  `Display the ArgoCD installation URL and configuration that would be applied.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Resolve version: CLI flag > config file > default
 		version := argocdVersion
@@ -210,90 +182,40 @@ var argocdShowCmd = &cobra.Command{
 			version = config.GetString(config.KeyArgocdVersion)
 		}
 
-		// Determine credential type
-		credType := docker.GitCredentialNone
-		if argocdGitUsername != "" && argocdGitPassword != "" {
-			credType = docker.GitCredentialHTTP
-		} else if argocdGitSSHKeyPath != "" {
-			credType = docker.GitCredentialSSH
+		// Resolve manifest URL: CLI flag > config file
+		manifestURL := argocdManifestURL
+		if manifestURL == "" {
+			manifestURL = config.GetString(config.KeyArgocdManifestURL)
 		}
 
-		cfg := docker.ArgoCDConfig{
-			Version:           version,
-			Namespace:         argocdNamespace,
-			RepoURL:           argocdRepoURL,
-			RepoPath:          argocdRepoPath,
-			RepoBranch:        argocdRepoBranch,
-			AppName:           argocdAppName,
-			TargetNamespace:   argocdTargetNamespace,
-			CredentialType:    credType,
-			HTTPUsername:      argocdGitUsername,
-			HTTPPassword:      argocdGitPassword,
-			SSHPrivateKeyPath: argocdGitSSHKeyPath,
-			IncludeKinderApps: argocdIncludeKinder,
-			SkipInitialApp:    argocdSkipApp || argocdRepoURL == "",
+		Output("# ArgoCD Installation\n\n")
+		Output("Version: %s\n", version)
+		Output("Namespace: %s\n", argocdNamespace)
+		Output("Install URL: %s/%s/manifests/install.yaml\n\n", kubernetes.ArgoCDInstallURL, version)
+
+		Output("# Configuration\n\n")
+		Output("Authentication: Anonymous admin access (disabled)\n")
+		Output("Server mode: Insecure (no TLS)\n\n")
+
+		if argocdRepoURL != "" {
+			Output("# Initial Application\n\n")
+			Output("Repository: %s\n", argocdRepoURL)
+			Output("Path: %s\n", argocdRepoPath)
+			Output("Branch: %s\n", argocdRepoBranch)
+			Output("App Name: %s\n", argocdAppName)
+			Output("Target Namespace: %s\n\n", argocdTargetNamespace)
 		}
 
-		// Load SSH key if provided
-		if cfg.SSHPrivateKeyPath != "" {
-			keyData, err := os.ReadFile(cfg.SSHPrivateKeyPath)
-			if err != nil {
-				return fmt.Errorf("failed to read SSH key: %w", err)
-			}
-			cfg.SSHPrivateKey = string(keyData)
+		if argocdIncludeKinder {
+			Output("# Kinder Apps\n\n")
+			Output("Includes: trust-bundle, cert-issuer (OCI from local registry)\n\n")
 		}
 
-		manifests, err := docker.GenerateArgoCDManifests(cfg)
-		if err != nil {
-			return fmt.Errorf("failed to generate manifests: %w", err)
+		if manifestURL != "" {
+			Output("# App-of-Apps\n\n")
+			Output("Manifest URL: %s\n", manifestURL)
 		}
 
-		// Print install URL
-		Output("# ArgoCD Installation (applied from URL)\n")
-		Output("# %s/%s/manifests/install.yaml\n\n", docker.ArgoCDInstallURL, cfg.Version)
-
-		Output("# namespace.yaml\n")
-		Output("---\n%s\n", string(manifests.Namespace))
-
-		if len(manifests.RepoSecret) > 0 {
-			Output("# repository-secret.yaml (credentials masked)\n")
-			Output("---\n")
-			Output("# Secret contains Git credentials - not displayed for security\n\n")
-		}
-
-		if len(manifests.InitialApp) > 0 {
-			Output("# initial-app.yaml\n")
-			Output("---\n%s", string(manifests.InitialApp))
-		}
-
-		if len(manifests.KinderApps) > 0 {
-			Output("\n# kinder-apps.yaml\n")
-			Output("---\n%s", string(manifests.KinderApps))
-		}
-
-		return nil
-	},
-}
-
-var argocdPasswordCmd = &cobra.Command{
-	Use:   "password",
-	Short: "Get the ArgoCD admin password",
-	Long:  `Retrieve the initial admin password from the argocd-initial-admin-secret.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
-
-		cfg := docker.ArgoCDConfig{
-			Namespace:      argocdNamespace,
-			KubeconfigPath: argocdKubeconfig,
-			KubeContext:    argocdContext,
-		}
-
-		password, err := docker.GetArgoCDPassword(ctx, cfg)
-		if err != nil {
-			return fmt.Errorf("failed to get password: %w", err)
-		}
-
-		Output("%s\n", password)
 		return nil
 	},
 }
@@ -302,12 +224,13 @@ func init() {
 	// Common flags for bootstrap and show
 	commonFlags := func(cmd *cobra.Command) {
 		cmd.Flags().StringVar(&argocdVersion, "version", "", fmt.Sprintf("ArgoCD version to install (default %s)", config.DefaultArgocdVersion))
-		cmd.Flags().StringVar(&argocdNamespace, "namespace", docker.ArgoCDNamespace, "ArgoCD namespace")
+		cmd.Flags().StringVar(&argocdNamespace, "namespace", kubernetes.ArgoCDNamespace, "ArgoCD namespace")
 		cmd.Flags().StringVar(&argocdRepoURL, "repo-url", "", "Git repository URL for initial app")
 		cmd.Flags().StringVar(&argocdRepoPath, "repo-path", ".", "Path within the repository")
 		cmd.Flags().StringVar(&argocdRepoBranch, "repo-branch", "main", "Branch to track")
 		cmd.Flags().StringVar(&argocdAppName, "app-name", "root", "Name of the initial Application")
 		cmd.Flags().StringVar(&argocdTargetNamespace, "target-namespace", "default", "Target namespace for deployed resources")
+		cmd.Flags().StringVar(&argocdManifestURL, "manifest-url", "", "URL to fetch and apply additional manifests (app-of-apps pattern)")
 		cmd.Flags().StringVar(&argocdGitUsername, "git-username", "", "Git username for HTTP auth")
 		cmd.Flags().StringVar(&argocdGitPassword, "git-password", "", "Git password or token for HTTP auth")
 		cmd.Flags().StringVar(&argocdGitSSHKeyPath, "git-ssh-key", "", "Path to SSH private key file")
@@ -317,21 +240,14 @@ func init() {
 
 	// Setup flags for bootstrap command
 	commonFlags(argocdBootstrapCmd)
-	argocdBootstrapCmd.Flags().BoolVar(&argocdWait, "wait", false, "Wait for ArgoCD to be ready")
-	argocdBootstrapCmd.Flags().DurationVar(&argocdWaitTimeout, "wait-timeout", 5*time.Minute, "Timeout for waiting")
+	argocdBootstrapCmd.Flags().DurationVar(&argocdWaitTimeout, "wait-timeout", 5*time.Minute, "Timeout for rollout")
 	argocdBootstrapCmd.Flags().StringVar(&argocdKubeconfig, "kubeconfig", "", "Path to kubeconfig file")
 	argocdBootstrapCmd.Flags().StringVar(&argocdContext, "context", "", "Kubernetes context to use")
 
 	// Setup flags for show command
 	commonFlags(argocdShowCmd)
 
-	// Setup flags for password command
-	argocdPasswordCmd.Flags().StringVar(&argocdNamespace, "namespace", docker.ArgoCDNamespace, "ArgoCD namespace")
-	argocdPasswordCmd.Flags().StringVar(&argocdKubeconfig, "kubeconfig", "", "Path to kubeconfig file")
-	argocdPasswordCmd.Flags().StringVar(&argocdContext, "context", "", "Kubernetes context to use")
-
 	// Add subcommands
 	argocdCmd.AddCommand(argocdBootstrapCmd)
 	argocdCmd.AddCommand(argocdShowCmd)
-	argocdCmd.AddCommand(argocdPasswordCmd)
 }

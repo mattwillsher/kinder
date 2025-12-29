@@ -15,6 +15,7 @@ import (
 
 	"codeberg.org/hipkoi/kinder/config"
 	"codeberg.org/hipkoi/kinder/docker"
+	"codeberg.org/hipkoi/kinder/kubernetes"
 	"github.com/spf13/cobra"
 )
 
@@ -113,7 +114,7 @@ Checks:
 		if appName == "" {
 			appName = config.DefaultAppName
 		}
-		kindExists, err := docker.KindExists(appName)
+		kindExists, err := kubernetes.KindExists(appName)
 		if err != nil {
 			fmt.Printf("   ⚠️  Skipped (failed to check Kind status: %v)\n", err)
 		} else if !kindExists {

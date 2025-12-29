@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"codeberg.org/hipkoi/kinder/config"
-	"codeberg.org/hipkoi/kinder/docker"
+	"codeberg.org/hipkoi/kinder/kubernetes"
 )
 
 // joinErrors joins a slice of error strings with ", "
@@ -97,25 +97,40 @@ func cleanContainerData(dataDir string) error {
 
 // pushTrustBundle creates and pushes the trust bundle OCI image to the local registry
 func pushTrustBundle(ctx context.Context, caCertPath string) error {
-	cfg := docker.TrustBundleConfig{
+	cfg := kubernetes.TrustBundleConfig{
 		RootCACertPath: caCertPath,
 		RegistryURL:    "localhost:5000",
 		ImageName:      "trust-bundle",
 		ImageTag:       "latest",
 	}
 
-	if err := docker.BuildAndPushTrustBundle(ctx, cfg); err != nil {
+	if err := kubernetes.BuildAndPushTrustBundle(ctx, cfg); err != nil {
 		return err
 	}
 
 	// Also push trust-manager manifests bundle
-	tmCfg := docker.TrustManagerBundleConfig{
+	tmCfg := kubernetes.TrustManagerBundleConfig{
 		RootCACertPath:    caCertPath,
 		RegistryURL:       "localhost:5000",
-		ImageName:         docker.TrustManagerBundleImageName,
-		ImageTag:          docker.TrustManagerBundleImageTag,
+		ImageName:         kubernetes.TrustManagerBundleImageName,
+		ImageTag:          kubernetes.TrustManagerBundleImageTag,
 		IncludeMozillaCAs: true,
 	}
 
-	return docker.BuildAndPushTrustManagerBundle(ctx, tmCfg)
+	return kubernetes.BuildAndPushTrustManagerBundle(ctx, tmCfg)
+}
+
+// pushCertManagerIssuer creates and pushes the cert-manager issuer OCI image
+func pushCertManagerIssuer(ctx context.Context, caCertPath string) error {
+	domain := config.GetString(config.KeyDomain)
+	port := config.GetString(config.KeyTraefikPort)
+
+	cfg := kubernetes.CertManagerIssuerConfig{
+		RootCACertPath: caCertPath,
+		RegistryURL:    "localhost:5000",
+		Domain:         domain,
+		Port:           port,
+	}
+
+	return kubernetes.BuildAndPushCertManagerIssuer(ctx, cfg)
 }

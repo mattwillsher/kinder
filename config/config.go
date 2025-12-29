@@ -24,26 +24,28 @@ const (
 	DefaultTraefikImage = "traefik:latest"
 	// DefaultArgocdVersion is the latest patch of the previous minor version
 	// Current stable: v3.2.x, so default to latest v3.1.x for stability
-	DefaultArgocdVersion = "v3.1.10"
+	DefaultArgocdVersion     = "v3.1.10"
+	DefaultArgocdManifestURL = "https://raw.githubusercontent.com/mattwillsher/kinder-argo/refs/heads/main/root-app.yaml"
 )
 
 // Config keys for Viper (use these constants to avoid typos)
 const (
-	KeyAppName         = "appName"
-	KeyDataDir         = "dataDir"
-	KeyDomain          = "domain"
-	KeyNetworkName     = "network.name"
-	KeyNetworkCIDR     = "network.cidr"
-	KeyNetworkBridge   = "network.bridge"
-	KeyTraefikPort     = "traefik.port"
-	KeyImagesStepCA    = "images.stepca"
-	KeyImagesZot       = "images.zot"
-	KeyImagesGatus     = "images.gatus"
-	KeyImagesTraefik   = "images.traefik"
-	KeyRegistryMirrors = "registryMirrors"
-	KeyCertPath        = "certPath"
-	KeyKeyPath         = "keyPath"
-	KeyArgocdVersion   = "argocd.version"
+	KeyAppName           = "appName"
+	KeyDataDir           = "dataDir"
+	KeyDomain            = "domain"
+	KeyNetworkName       = "network.name"
+	KeyNetworkCIDR       = "network.cidr"
+	KeyNetworkBridge     = "network.bridge"
+	KeyTraefikPort       = "traefik.port"
+	KeyImagesStepCA      = "images.stepca"
+	KeyImagesZot         = "images.zot"
+	KeyImagesGatus       = "images.gatus"
+	KeyImagesTraefik     = "images.traefik"
+	KeyRegistryMirrors   = "registryMirrors"
+	KeyCertPath          = "certPath"
+	KeyKeyPath           = "keyPath"
+	KeyArgocdVersion     = "argocd.version"
+	KeyArgocdManifestURL = "argocd.manifestURL"
 )
 
 // DefaultRegistryMirrors is the default list of registries to mirror
@@ -68,7 +70,8 @@ type TraefikConfig struct {
 
 // ArgocdConfig holds ArgoCD-related configuration
 type ArgocdConfig struct {
-	Version string `mapstructure:"version" yaml:"version,omitempty"`
+	Version     string `mapstructure:"version" yaml:"version,omitempty"`
+	ManifestURL string `mapstructure:"manifestURL" yaml:"manifestURL,omitempty"`
 }
 
 // ImagesConfig holds container image configuration
@@ -145,6 +148,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault(KeyNetworkBridge, DefaultBridgeName)
 	v.SetDefault(KeyTraefikPort, DefaultTraefikPort)
 	v.SetDefault(KeyArgocdVersion, DefaultArgocdVersion)
+	v.SetDefault(KeyArgocdManifestURL, DefaultArgocdManifestURL)
 	v.SetDefault(KeyImagesStepCA, DefaultStepCAImage)
 	v.SetDefault(KeyImagesZot, DefaultZotImage)
 	v.SetDefault(KeyImagesGatus, DefaultGatusImage)
@@ -302,6 +306,9 @@ func (c *FileConfig) ApplyDefaults() {
 	}
 	if c.Argocd.Version == "" {
 		c.Argocd.Version = DefaultArgocdVersion
+	}
+	if c.Argocd.ManifestURL == "" {
+		c.Argocd.ManifestURL = DefaultArgocdManifestURL
 	}
 	if c.Images.StepCA == "" {
 		c.Images.StepCA = DefaultStepCAImage

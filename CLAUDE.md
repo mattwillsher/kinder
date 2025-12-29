@@ -79,6 +79,9 @@ network:
   bridge: kindbr0
 traefik:
   port: "8443"
+argocd:
+  version: v3.1.10
+  manifestURL: https://raw.githubusercontent.com/org/gitops/main/app-of-apps.yaml
 images:
   stepca: smallstep/step-ca:latest
   zot: ghcr.io/project-zot/zot-linux-amd64:latest
@@ -101,6 +104,8 @@ All config keys can be set via environment variables with `KINDER_` prefix:
 - `KINDER_NETWORK_CIDR` - Network CIDR
 - `KINDER_IMAGES_STEPCA` - Step CA image
 - `KINDER_IMAGES_ZOT` - Zot registry image
+- `KINDER_ARGOCD_VERSION` - ArgoCD version to install (default: v3.1.10)
+- `KINDER_ARGOCD_MANIFESTURL` - URL to fetch app-of-apps manifest (default: https://raw.githubusercontent.com/mattwillsher/kinder-argo/refs/heads/main/root-app.yaml)
 
 ### CLI Flags
 
@@ -282,6 +287,20 @@ The Zot registry has no authentication enabled:
 - This is intentional for local development convenience
 
 **Mitigation**: Firewall external access to port 5000.
+
+### Registry Mirror Image Collisions
+The Zot pull-through cache does not namespace images by upstream registry:
+- Images from all mirrored registries (docker.io, ghcr.io, quay.io, registry.k8s.io) are cached in a single namespace
+- If two registries have images with identical names, only one will be cached
+- Zot will pull from the first matching upstream and cache that version
+
+**Mitigation**: This is rarely an issue in practice since registries use different naming conventions:
+- Docker Hub: `library/*` for official images, `user/repo` for others
+- GHCR: `org/repo` format
+- Quay.io: `org/repo` format
+- registry.k8s.io: Kubernetes-specific paths
+
+If you need strict registry isolation, pull images directly from upstream instead of through the cache.
 
 ---
 

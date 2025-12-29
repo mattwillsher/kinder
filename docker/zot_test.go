@@ -148,16 +148,20 @@ func TestGenerateZotConfig_ContentPrefixes(t *testing.T) {
 
 	contentStr := string(content)
 
-	// Verify content prefixes are present for namespacing
-	expectedPrefixes := []string{
-		`"prefix": "/**"`,
-		`"destination": "/ghcr.io"`,
-		`"destination": "/registry-1.docker.io"`,
+	// Verify prefix pattern is present (no destination since all images cache at root)
+	if !strings.Contains(contentStr, `"prefix": "**"`) {
+		t.Errorf("config.json does not contain expected prefix pattern")
 	}
 
-	for _, expected := range expectedPrefixes {
+	// Verify upstream registry URLs are configured
+	expectedUpstreams := []string{
+		"https://ghcr.io",
+		"https://registry-1.docker.io",
+	}
+
+	for _, expected := range expectedUpstreams {
 		if !strings.Contains(contentStr, expected) {
-			t.Errorf("config.json does not contain expected content prefix: %s", expected)
+			t.Errorf("config.json does not contain expected upstream URL: %s", expected)
 		}
 	}
 }

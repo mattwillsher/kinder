@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
@@ -100,6 +102,36 @@ func RemoveZotContainer(ctx context.Context, containerName string) error {
 	return RemoveContainer(ctx, containerName)
 }
 
+// WaitForZot waits for the Zot registry to be ready to accept connections
+func WaitForZot(ctx context.Context, timeout time.Duration) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost:5000/v2/", nil)
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+
+		resp, err := client.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+			// Retry
+		}
+	}
+
+	return fmt.Errorf("timeout waiting for Zot registry to be ready")
+}
+
 // zotContentConfig represents the content prefix/destination mapping
 type zotContentConfig struct {
 	Prefix      string `json:"prefix"`
@@ -165,11 +197,10 @@ func MirrorPath(registry string) string {
 // generateZotConfig creates a configuration file for Zot with specified registry mirrors
 func generateZotConfig(path string, mirrors []string) error {
 	// Build registries list from mirrors
+	// All images are cached at the root path - no destination prefix needed
+	// since containerd sends requests directly to /v2/<repo>/...
 	registries := make([]zotConfigRegistry, 0, len(mirrors))
 	for _, mirror := range mirrors {
-		// Each registry gets its own path prefix to avoid collisions
-		// e.g., images from docker.io are stored under /docker.io/
-		destPath := MirrorPath(mirror)
 		registries = append(registries, zotConfigRegistry{
 			URLs:       []string{"https://" + mirror},
 			OnDemand:   true,
@@ -178,8 +209,7 @@ func generateZotConfig(path string, mirrors []string) error {
 			RetryDelay: "5m",
 			Content: []zotContentConfig{
 				{
-					Prefix:      "/**",
-					Destination: destPath,
+					Prefix: "**",
 				},
 			},
 		})

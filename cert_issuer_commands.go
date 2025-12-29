@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"codeberg.org/hipkoi/kinder/docker"
+	"codeberg.org/hipkoi/kinder/kubernetes"
 	"github.com/spf13/cobra"
 )
 
@@ -76,7 +76,7 @@ ArgoCD can reference this artifact directly:
 			return fmt.Errorf("CA certificate not found at %s. Run 'kinder start' or 'kinder ca generate' first", caCertPath)
 		}
 
-		cfg := docker.CertManagerIssuerConfig{
+		cfg := kubernetes.CertManagerIssuerConfig{
 			RootCACertPath:     caCertPath,
 			RegistryURL:        "localhost:5000",
 			ImageName:          certIssuerImageName,
@@ -98,7 +98,7 @@ ArgoCD can reference this artifact directly:
 
 		// Build and push the bundle
 		ProgressStart("📦", "Building OCI artifact")
-		if err := docker.BuildAndPushCertManagerIssuer(ctx, cfg); err != nil {
+		if err := kubernetes.BuildAndPushCertManagerIssuer(ctx, cfg); err != nil {
 			ProgressDone(false, err.Error())
 			return fmt.Errorf("failed to push cert-manager issuer bundle: %w", err)
 		}
@@ -116,13 +116,13 @@ ArgoCD can reference this artifact directly:
 			}
 
 			// Generate and save manifests
-			manifests, err := docker.GenerateCertManagerIssuerManifests(cfg, kinderCA)
+			manifests, err := kubernetes.GenerateCertManagerIssuerManifests(cfg, kinderCA)
 			if err != nil {
 				ProgressDone(false, err.Error())
 				return fmt.Errorf("failed to generate manifests: %w", err)
 			}
 
-			if err := docker.SaveCertManagerIssuerManifests(dataDir, manifests); err != nil {
+			if err := kubernetes.SaveCertManagerIssuerManifests(dataDir, manifests); err != nil {
 				ProgressDone(false, err.Error())
 				return fmt.Errorf("failed to save manifests: %w", err)
 			}
@@ -179,7 +179,7 @@ var certIssuerShowCmd = &cobra.Command{
 			return fmt.Errorf("failed to read CA certificate: %w", err)
 		}
 
-		cfg := docker.CertManagerIssuerConfig{
+		cfg := kubernetes.CertManagerIssuerConfig{
 			RootCACertPath:     caCertPath,
 			IssuerName:         certIssuerName,
 			Email:              certIssuerEmail,
@@ -193,7 +193,7 @@ var certIssuerShowCmd = &cobra.Command{
 			ExampleCertDomain:  certIssuerExampleDomain,
 		}
 
-		manifests, err := docker.GenerateCertManagerIssuerManifests(cfg, kinderCA)
+		manifests, err := kubernetes.GenerateCertManagerIssuerManifests(cfg, kinderCA)
 		if err != nil {
 			return fmt.Errorf("failed to generate manifests: %w", err)
 		}
@@ -215,23 +215,23 @@ var certIssuerShowCmd = &cobra.Command{
 
 func init() {
 	// Setup flags for cert-issuer push command
-	certIssuerPushCmd.Flags().StringVar(&certIssuerName, "issuer-name", docker.CertManagerIssuerName, "Name of the ClusterIssuer")
-	certIssuerPushCmd.Flags().StringVar(&certIssuerEmail, "email", docker.CertManagerIssuerEmail, "ACME account email address")
+	certIssuerPushCmd.Flags().StringVar(&certIssuerName, "issuer-name", kubernetes.CertManagerIssuerName, "Name of the ClusterIssuer")
+	certIssuerPushCmd.Flags().StringVar(&certIssuerEmail, "email", kubernetes.CertManagerIssuerEmail, "ACME account email address")
 	certIssuerPushCmd.Flags().StringVar(&certIssuerACMEServer, "acme-server", "", "ACME server URL (default: derived from domain/port)")
-	certIssuerPushCmd.Flags().StringVar(&certIssuerIngressClass, "ingress-class", docker.CertManagerIssuerIngressClass, "Ingress class for HTTP-01 solver")
+	certIssuerPushCmd.Flags().StringVar(&certIssuerIngressClass, "ingress-class", kubernetes.CertManagerIssuerIngressClass, "Ingress class for HTTP-01 solver")
 	certIssuerPushCmd.Flags().BoolVar(&certIssuerUseDNS01, "dns01", false, "Use DNS-01 solver instead of HTTP-01")
 	certIssuerPushCmd.Flags().StringVar(&certIssuerDNS01Provider, "dns01-provider", "", "DNS provider for DNS-01 (e.g., cloudflare, route53)")
-	certIssuerPushCmd.Flags().StringVar(&certIssuerImageName, "image-name", docker.CertManagerIssuerImageName, "Image name for the bundle")
-	certIssuerPushCmd.Flags().StringVar(&certIssuerImageTag, "image-tag", docker.CertManagerIssuerImageTag, "Image tag for the bundle")
+	certIssuerPushCmd.Flags().StringVar(&certIssuerImageName, "image-name", kubernetes.CertManagerIssuerImageName, "Image name for the bundle")
+	certIssuerPushCmd.Flags().StringVar(&certIssuerImageTag, "image-tag", kubernetes.CertManagerIssuerImageTag, "Image tag for the bundle")
 	certIssuerPushCmd.Flags().BoolVar(&certIssuerSaveLocal, "save-local", false, "Also save manifests to local data directory")
 	certIssuerPushCmd.Flags().BoolVar(&certIssuerIncludeExample, "include-example", false, "Include an example Certificate resource")
 	certIssuerPushCmd.Flags().StringVar(&certIssuerExampleDomain, "example-domain", "", "Domain for the example certificate (default: example.<domain>)")
 
 	// Setup flags for cert-issuer show command
-	certIssuerShowCmd.Flags().StringVar(&certIssuerName, "issuer-name", docker.CertManagerIssuerName, "Name of the ClusterIssuer")
-	certIssuerShowCmd.Flags().StringVar(&certIssuerEmail, "email", docker.CertManagerIssuerEmail, "ACME account email address")
+	certIssuerShowCmd.Flags().StringVar(&certIssuerName, "issuer-name", kubernetes.CertManagerIssuerName, "Name of the ClusterIssuer")
+	certIssuerShowCmd.Flags().StringVar(&certIssuerEmail, "email", kubernetes.CertManagerIssuerEmail, "ACME account email address")
 	certIssuerShowCmd.Flags().StringVar(&certIssuerACMEServer, "acme-server", "", "ACME server URL (default: derived from domain/port)")
-	certIssuerShowCmd.Flags().StringVar(&certIssuerIngressClass, "ingress-class", docker.CertManagerIssuerIngressClass, "Ingress class for HTTP-01 solver")
+	certIssuerShowCmd.Flags().StringVar(&certIssuerIngressClass, "ingress-class", kubernetes.CertManagerIssuerIngressClass, "Ingress class for HTTP-01 solver")
 	certIssuerShowCmd.Flags().BoolVar(&certIssuerUseDNS01, "dns01", false, "Use DNS-01 solver instead of HTTP-01")
 	certIssuerShowCmd.Flags().StringVar(&certIssuerDNS01Provider, "dns01-provider", "", "DNS provider for DNS-01")
 	certIssuerShowCmd.Flags().BoolVar(&certIssuerIncludeExample, "include-example", false, "Include an example Certificate resource")

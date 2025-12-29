@@ -1,4 +1,4 @@
-package docker
+package kubernetes
 
 import (
 	"archive/tar"
@@ -169,7 +169,7 @@ metadata:
     app.kubernetes.io/managed-by: kinder
 data:
   ca.crt: |
-%s`, TrustManagerConfigMapName, namespace, indentPEM(certPEM, 4))
+%s`, TrustManagerConfigMapName, namespace, indentPEMForConfigMap(certPEM, 4))
 }
 
 // generateBundleYAML creates a trust-manager Bundle resource
@@ -214,8 +214,8 @@ resources:
 `
 }
 
-// indentPEM indents each line of the PEM content by the specified number of spaces
-func indentPEM(pem string, spaces int) string {
+// indentPEMForConfigMap indents each line of the PEM content by the specified number of spaces
+func indentPEMForConfigMap(pem string, spaces int) string {
 	indent := ""
 	for i := 0; i < spaces; i++ {
 		indent += " "

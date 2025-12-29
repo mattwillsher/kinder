@@ -1,4 +1,4 @@
-package docker
+package kubernetes
 
 import (
 	"os"
@@ -152,9 +152,9 @@ func TestCreateCertsDirStructure(t *testing.T) {
 		t.Error("hosts.toml should contain registry-1.docker.io as upstream server")
 	}
 
-	// Should use the path prefix matching the original registry name
-	if !strings.Contains(contentStr, `[host."http://zot:5000/registry-1.docker.io"]`) {
-		t.Errorf("hosts.toml should contain mirror URL with path prefix, got:\n%s", contentStr)
+	// Should use mirror URL without path prefix (OCI API requires /v2/ at root)
+	if !strings.Contains(contentStr, `[host."http://zot:5000"]`) {
+		t.Errorf("hosts.toml should contain mirror URL without path prefix, got:\n%s", contentStr)
 	}
 
 	// Verify CA cert was copied
@@ -175,8 +175,8 @@ func TestCreateCertsDirStructure(t *testing.T) {
 		t.Error("ghcr.io hosts.toml should contain ghcr.io as upstream server")
 	}
 
-	if !strings.Contains(ghcrStr, `[host."http://zot:5000/ghcr.io"]`) {
-		t.Error("ghcr.io hosts.toml should contain mirror URL with path prefix")
+	if !strings.Contains(ghcrStr, `[host."http://zot:5000"]`) {
+		t.Error("ghcr.io hosts.toml should contain mirror URL without path prefix")
 	}
 }
 

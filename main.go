@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"codeberg.org/hipkoi/kinder/cacert"
 	"codeberg.org/hipkoi/kinder/config"
 	"codeberg.org/hipkoi/kinder/docker"
+	"codeberg.org/hipkoi/kinder/kubernetes"
 	"github.com/spf13/cobra"
 )
 
@@ -242,6 +244,11 @@ var startCmd = &cobra.Command{
 			ProgressDone(false, err.Error())
 			return fmt.Errorf("failed to start Zot: %w", err)
 		}
+		// Wait for Zot to be ready before pushing images
+		if err := docker.WaitForZot(ctx, 30*time.Second); err != nil {
+			ProgressDone(false, err.Error())
+			return fmt.Errorf("Zot registry not ready: %w", err)
+		}
 		ProgressDone(true, "Running")
 		Verbose("\n")
 
@@ -251,7 +258,16 @@ var startCmd = &cobra.Command{
 			ProgressDone(false, err.Error())
 			return fmt.Errorf("failed to push trust bundle: %w", err)
 		}
-		ProgressDone(true, "Pushed to registry")
+		ProgressDone(true, "Pushed")
+		Verbose("\n")
+
+		// Step 3.6: Push cert-manager issuer to registry
+		ProgressStart("📜", "Cert Issuer")
+		if err := pushCertManagerIssuer(ctx, certPath); err != nil {
+			ProgressDone(false, err.Error())
+			return fmt.Errorf("failed to push cert-manager issuer: %w", err)
+		}
+		ProgressDone(true, "Pushed")
 		Verbose("\n")
 
 		// Step 4: Start Gatus
@@ -279,6 +295,15 @@ var startCmd = &cobra.Command{
 			return fmt.Errorf("failed to start Kind: %w", err)
 		}
 		ProgressDone(true, "Running")
+		Verbose("\n")
+
+		// Step 7: Bootstrap ArgoCD
+		ProgressStart("🐙", "ArgoCD")
+		if err := bootstrapArgoCD(ctx); err != nil {
+			ProgressDone(false, err.Error())
+			return fmt.Errorf("failed to bootstrap ArgoCD: %w", err)
+		}
+		ProgressDone(true, "Running")
 
 		BlankLine()
 
@@ -295,6 +320,7 @@ var startCmd = &cobra.Command{
 		ServiceInfo("Registry", fmt.Sprintf("https://registry.%s:%s", traefikDomain, traefikPort))
 		ServiceInfo("Gatus", fmt.Sprintf("https://gatus.%s:%s", traefikDomain, traefikPort))
 		ServiceInfo("Zot (direct)", "http://localhost:5000")
+		ServiceInfo("ArgoCD", "kubectl port-forward svc/argocd-server -n argocd 8080:443")
 		BlankLine()
 		Output("kubectl cluster-info --context kind-%s\n", appName)
 
@@ -383,22 +409,6 @@ var stopCmd = &cobra.Command{
 		} else {
 			ProgressDone(true, "Not present")
 		}
-		Verbose("\n")
-
-		// Step 7: Clean container data (preserve CA cert and key)
-		ProgressStart("🧹", "Container data")
-		dataDir, err := getDataDir()
-		if err != nil {
-			ProgressDone(false, err.Error())
-			errs = append(errs, fmt.Sprintf("data dir: %v", err))
-		} else {
-			if err := cleanContainerData(dataDir); err != nil {
-				ProgressDone(false, err.Error())
-				errs = append(errs, fmt.Sprintf("clean data: %v", err))
-			} else {
-				ProgressDone(true, "Cleaned (CA preserved)")
-			}
-		}
 
 		BlankLine()
 
@@ -473,20 +483,6 @@ var restartCmd = &cobra.Command{
 		}
 		Verbose("\n")
 
-		// Step 6: Clean container data (preserve CA cert and key)
-		ProgressStart("🧹", "Container data")
-		dataDir, err := getDataDir()
-		if err != nil {
-			ProgressDone(false, err.Error())
-		} else {
-			if err := cleanContainerData(dataDir); err != nil {
-				ProgressDone(false, err.Error())
-			} else {
-				ProgressDone(true, "Cleaned")
-			}
-		}
-		Verbose("\n")
-
 		Verbose("Starting services...\n")
 
 		// Start containers with updated configs
@@ -505,7 +501,30 @@ var restartCmd = &cobra.Command{
 			ProgressDone(false, err.Error())
 			return fmt.Errorf("failed to start Zot: %w", err)
 		}
+		// Wait for Zot to be ready before pushing images
+		if err := docker.WaitForZot(ctx, 30*time.Second); err != nil {
+			ProgressDone(false, err.Error())
+			return fmt.Errorf("Zot registry not ready: %w", err)
+		}
 		ProgressDone(true, "Running")
+		Verbose("\n")
+
+		// Step 2.5: Push trust bundle
+		ProgressStart("🔐", "Trust Bundle")
+		if err := pushTrustBundle(ctx, certPath); err != nil {
+			ProgressDone(false, err.Error())
+			return fmt.Errorf("failed to push trust bundle: %w", err)
+		}
+		ProgressDone(true, "Pushed")
+		Verbose("\n")
+
+		// Step 2.6: Push cert-manager issuer
+		ProgressStart("📜", "Cert Issuer")
+		if err := pushCertManagerIssuer(ctx, certPath); err != nil {
+			ProgressDone(false, err.Error())
+			return fmt.Errorf("failed to push cert-manager issuer: %w", err)
+		}
+		ProgressDone(true, "Pushed")
 		Verbose("\n")
 
 		// Step 3: Start Gatus
@@ -533,6 +552,15 @@ var restartCmd = &cobra.Command{
 			return fmt.Errorf("failed to start Kind: %w", err)
 		}
 		ProgressDone(true, "Running")
+		Verbose("\n")
+
+		// Step 6: Bootstrap ArgoCD
+		ProgressStart("🐙", "ArgoCD")
+		if err := bootstrapArgoCD(ctx); err != nil {
+			ProgressDone(false, err.Error())
+			return fmt.Errorf("failed to bootstrap ArgoCD: %w", err)
+		}
+		ProgressDone(true, "Running")
 
 		BlankLine()
 
@@ -549,6 +577,7 @@ var restartCmd = &cobra.Command{
 		ServiceInfo("Registry", fmt.Sprintf("https://registry.%s:%s", traefikDomain, traefikPort))
 		ServiceInfo("Gatus", fmt.Sprintf("https://gatus.%s:%s", traefikDomain, traefikPort))
 		ServiceInfo("Zot (direct)", "http://localhost:5000")
+		ServiceInfo("ArgoCD", "kubectl port-forward svc/argocd-server -n argocd 8080:443")
 		BlankLine()
 		Output("kubectl cluster-info --context kind-%s\n", appName)
 
@@ -717,7 +746,7 @@ func init() {
 	startCmd.Flags().StringVar(&traefikPort, "traefik-port", docker.DefaultTraefikPort, "Traefik localhost HTTPS port")
 	startCmd.Flags().StringVar(&traefikDomain, "traefik-domain", docker.DefaultTraefikDomain, "Traefik base domain for services")
 	startCmd.Flags().IntVar(&kindWorkerNodes, "workers", 0, "Number of Kind worker nodes (0 = control-plane only)")
-	startCmd.Flags().StringVar(&kindNodeImage, "node-image", docker.KindNodeImage, "Kind node image to use")
+	startCmd.Flags().StringVar(&kindNodeImage, "node-image", kubernetes.KindNodeImage, "Kind node image to use")
 
 	// Setup flags for stop command
 	stopCmd.Flags().StringVar(&networkName, "network", docker.DefaultNetworkName, "Docker network name")
@@ -730,7 +759,7 @@ func init() {
 	restartCmd.Flags().StringVar(&traefikPort, "traefik-port", docker.DefaultTraefikPort, "Traefik localhost HTTPS port")
 	restartCmd.Flags().StringVar(&traefikDomain, "traefik-domain", docker.DefaultTraefikDomain, "Traefik base domain for services")
 	restartCmd.Flags().IntVar(&kindWorkerNodes, "workers", 0, "Number of Kind worker nodes (0 = control-plane only)")
-	restartCmd.Flags().StringVar(&kindNodeImage, "node-image", docker.KindNodeImage, "Kind node image to use")
+	restartCmd.Flags().StringVar(&kindNodeImage, "node-image", kubernetes.KindNodeImage, "Kind node image to use")
 
 	// Add commands to config
 	configCmd.AddCommand(configShowCmd)
@@ -739,7 +768,7 @@ func init() {
 
 	// Setup flags for Kind commands
 	kindStartCmd.Flags().IntVar(&kindWorkerNodes, "workers", 0, "Number of worker nodes (0 = control-plane only)")
-	kindStartCmd.Flags().StringVar(&kindNodeImage, "node-image", docker.KindNodeImage, "Kind node image to use")
+	kindStartCmd.Flags().StringVar(&kindNodeImage, "node-image", kubernetes.KindNodeImage, "Kind node image to use")
 
 	// Add commands to kind
 	kindCmd.AddCommand(kindStartCmd)
